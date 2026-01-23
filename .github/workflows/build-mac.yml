@@ -3,30 +3,35 @@ name: Build Universal macOS App
 on:
   push:
     tags:
-      - 'v*'           # 只有推送类似 v1.0 的标签时才触发构建，避免每次提交都构建
+      - 'v*'           # 只有推送类似 v1.0 的标签时才触发，节省资源
   workflow_dispatch:    # 允许在 GitHub 网页手动触发构建
 
 jobs:
   build:
-    runs-on: macos-latest  # 使用 GitHub 提供的最新 macOS（包含 M1 Runner）
+    runs-on: macos-latest  # 使用最新的 macOS Runner（内含 M1 环境）
     strategy:
       matrix:
-        python-version: ['3.9']  # 建议使用兼容性好的 Python 版本
+        python-version: ['3.9']  # 使用稳定的 Python 3.9
 
     steps:
-    - name: Checkout 代码
-      uses: actions/checkout@v3
+    - name: 检出代码
+      uses: actions/checkout@v4  # 升级到 v4
 
     - name: 设置 Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5  # 升级到 v5
       with:
         python-version: ${{ matrix.python-version }}
 
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install PyInstaller PySide6 aiohttp
-        # 如果使用 requirements.txt，改为：pip install -r requirements.txt
+        # 如果存在 requirements.txt，优先使用它
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        else
+          # 否则安装核心依赖
+          pip install PyInstaller PySide6 aiohttp
+        fi
 
     - name: 为双架构分别打包
       run: |
@@ -62,31 +67,30 @@ jobs:
         lipo -create -output "CloudflareScan_Universal" \
           "./dist/CloudflareScan_x86_64" \
           "./dist/CloudflareScan_arm64"
-        # 为合并后的文件添加执行权限
         chmod +x "CloudflareScan_Universal"
-        # 查看合并后的架构信息（用于验证）
+        # 输出验证信息
+        echo "✅ 通用二进制文件创建成功，架构信息如下："
         lipo -info "CloudflareScan_Universal"
 
     - name: 准备发布文件
       run: |
-        # 创建一个干净的发布文件夹
         mkdir -p release
-        # 移动通用二进制文件
         mv "CloudflareScan_Universal" release/
-        # 如果有图标等资源文件，也复制进来，例如：
-        # cp cfs.icns release/ 2>/dev/null || true
-        # 创建一个简单的说明文档
+        # 可选：复制图标文件
+        if [ -f cfs.icns ]; then
+          cp cfs.icns release/
+        fi
         echo "# Cloudflare Scan (Universal macOS App)" > release/README.txt
-        echo "此程序为通用二进制版本，同时支持 Intel (x86_64) 和 Apple Silicon (arm64) 芯片的 Mac。" >> release/README.txt
-        echo "构建于: $(date)" >> release/README.txt
+        echo "构建时间: $(date)" >> release/README.txt
 
     - name: 创建 Release 压缩包
       run: |
         cd release
         zip -r "../CloudflareScan_macOS_Universal.zip" .
 
-    - name: 上传 Release 压缩包
-      uses: actions/upload-artifact@v3
+    - name: 上传构建产物 (Artifact)
+      uses: actions/upload-artifact@v4  # 关键修复：升级到 v4
       with:
         name: CloudflareScan-Universal
         path: CloudflareScan_macOS_Universal.zip
+        retention-days: 7  # 产物保留天数（免费额度内）
