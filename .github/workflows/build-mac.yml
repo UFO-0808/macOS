@@ -3,7 +3,7 @@ name: Build Universal macOS App
 on:
   push:
     tags:
-      - ‘v*’
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -11,7 +11,8 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python-version: [‘3.9’]
+        # 使用 GitHub Actions 官方文档明确支持的 Python 版本
+        python-version: ['3.10']
 
     steps:
     - name: 检出代码
@@ -24,69 +25,62 @@ jobs:
 
     - name: 安装依赖 (x86_64 环境)
       run: |
-        # 关键点1: 使用arch命令进入x86_64模拟环境
-        # 关键点2: 设置环境变量，强制从源码编译C扩展
-        arch -x86_64 /bin/bash -c “
+        arch -x86_64 /bin/bash -c "
           python -m pip install --upgrade pip setuptools wheel
-          # 设置编译标志，确保生成x86_64的二进制
-          export ARCHFLAGS=‘-arch x86_64’
-          export PIP_BUILD=‘1’
-          # 安装依赖，这会触发从源码编译（如yarl）
+          export ARCHFLAGS='-arch x86_64'
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
             pip install PyInstaller PySide6 aiohttp
           fi
-        ”
+        "
 
     - name: 为双架构分别打包
       run: |
-        echo “=== 开始打包 x86_64 版本 ==="
-        # 关键点3: 在x86_64环境内执行PyInstaller
+        echo "=== 开始打包 x86_64 版本 ==="
         arch -x86_64 python -m PyInstaller \
           --onefile \
           --windowed \
-          --name “CloudflareScan_x86_64” \
+          --name "CloudflareScan_x86_64" \
           --hidden-import=asyncio \
           --hidden-import=aiohttp \
           --hidden-import=PySide6.QtCore \
           --hidden-import=PySide6.QtGui \
           --hidden-import=PySide6.QtWidgets \
-          --add-data “./:.” \
+          --add-data "./:." \
           ./cfs-mac.py
 
-        echo “=== 开始打包原生 arm64 版本 ==="
-        # arm64版本无需特殊处理
+        echo "=== 开始打包原生 arm64 版本 ==="
         python -m PyInstaller \
           --onefile \
           --windowed \
-          --name “CloudflareScan_arm64” \
+          --name "CloudflareScan_arm64" \
           --hidden-import=asyncio \
           --hidden-import=aiohttp \
           --hidden-import=PySide6.QtCore \
           --hidden-import=PySide6.QtGui \
           --hidden-import=PySide6.QtWidgets \
-          --add-data “./:.” \
+          --add-data "./:." \
           ./cfs-mac.py
 
     - name: 合并为通用二进制
       run: |
-        lipo -create -output “CloudflareScan_Universal” \
-          “./dist/CloudflareScan_x86_64” \
-          “./dist/CloudflareScan_arm64”
-        chmod +x “CloudflareScan_Universal”
-        echo “✅ 通用二进制文件创建成功:”
-        lipo -info “CloudflareScan_Universal”
+        lipo -create -output "CloudflareScan_Universal" \
+          "./dist/CloudflareScan_x86_64" \
+          "./dist/CloudflareScan_arm64"
+        chmod +x "CloudflareScan_Universal"
+        echo "✅ 通用二进制文件创建成功:"
+        lipo -info "CloudflareScan_Universal"
 
     - name: 准备并上传构建产物
       run: |
         mkdir -p release
-        mv “CloudflareScan_Universal” release/
+        mv "CloudflareScan_Universal" release/
         if [ -f cfs.icns ]; then
           cp cfs.icns release/
         fi
         cd release
-        zip -r “../CloudflareScan_macOS_Universal.zip” .
+        zip -r "../CloudflareScan_macOS_Universal.zip" .
 
     - name: 上传 Artifact
       uses: actions/upload-artifact@v4
