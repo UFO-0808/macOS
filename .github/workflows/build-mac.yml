@@ -43,6 +43,13 @@ jobs:
               ./cfs-mac.py
           "
 
+      - name: 检查构建结果
+        run: |
+          echo "当前目录结构:"
+          find dist -type f -o -type d
+          echo "dist目录内容:"
+          ls -la dist/
+
       - name: Upload x86_64 artifact
         uses: actions/upload-artifact@v4
         with:
@@ -106,48 +113,110 @@ jobs:
         with:
           path: downloaded_artifacts
 
+      - name: 检查下载的构件
+        run: |
+          echo "下载的构件结构:"
+          find downloaded_artifacts -type f -o -type d
+
       - name: Create Universal App bundle
         run: |
-          # 提取两个架构的可执行文件
+          # 首先确保两个架构的构建文件都存在
+          if [ ! -d "downloaded_artifacts/app-x86_64/CloudflareScan_x86_64.app" ]; then
+            echo "寻找x86_64构建文件..."
+            find downloaded_artifacts -name "*.app" -type d
+            # 尝试找到正确的路径
+            X86_PATH=$(find downloaded_artifacts -name "*x86_64*.app" -type d | head -1)
+            ARM_PATH=$(find downloaded_artifacts -name "*arm64*.app" -type d | head -1)
+          else
+            X86_PATH="downloaded_artifacts/app-x86_64/CloudflareScan_x86_64.app"
+            ARM_PATH="downloaded_artifacts/app-arm64/CloudflareScan_arm64.app"
+          fi
+          
+          echo "x86_64应用路径: $X86_PATH"
+          echo "arm64应用路径: $ARM_PATH"
+          
+          # 检查应用内部结构
+          echo "检查x86_64应用结构:"
+          ls -la "$X86_PATH/Contents/MacOS/"
+          
+          # 创建临时目录并复制x86_64版本作为基础
           mkdir -p temp_universal
-          cp -r downloaded_artifacts/app-x86_64/CloudflareScan_x86_64.app temp_universal/CloudflareScan_Universal.app
+          cp -r "$X86_PATH" temp_universal/CloudflareScan_Universal.app
           
           # 合并可执行文件
-          lipo -create -output temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan_x86_64 \
-            downloaded_artifacts/app-x86_64/CloudflareScan_x86_64.app/Contents/MacOS/CloudflareScan_x86_64 \
-            downloaded_artifacts/app-arm64/CloudflareScan_arm64.app/Contents/MacOS/CloudflareScan_arm64
+          X86_EXECUTABLE="$X86_PATH/Contents/MacOS/CloudflareScan_x86_64"
+          ARM_EXECUTABLE="$ARM_PATH/Contents/MacOS/CloudflareScan_arm64"
           
-          # 重命名可执行文件
-          mv temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan_x86_64 \
-             temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan
+          echo "x86可执行文件: $X86_EXECUTABLE"
+          echo "arm可执行文件: $ARM_EXECUTABLE"
           
-          # 更新 Info.plist 中的可执行文件名
-          plutil -replace CFBundleExecutable -string "CloudflareScan" temp_universal/CloudflareScan_Universal.app/Contents/Info.plist
+          lipo -create -output temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan \
+            "$X86_EXECUTABLE" \
+            "$ARM_EXECUTABLE"
+          
+          # 确保可执行文件有正确的权限
+          chmod +x temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan
           
           # 检查架构
           echo "Universal binary architecture info:"
           lipo -info temp_universal/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan
           
-          # 移动到 release 目录
+          # 更新Info.plist中的可执行文件名
+          plutil -replace CFBundleExecutable -string "CloudflareScan" temp_universal/CloudflareScan_Universal.app/Contents/Info.plist
+          
+          # 移动到release目录
           mkdir -p release
           mv temp_universal/CloudflareScan_Universal.app release/
 
+      - name: 检查最终应用结构
+        run: |
+          echo "最终应用结构:"
+          find release -type f -o -type d
+          echo "应用大小:"
+          du -sh release/CloudflareScan_Universal.app
+          echo "可执行文件架构:"
+          lipo -info release/CloudflareScan_Universal.app/Contents/MacOS/CloudflareScan
+
       - name: Create DMG package
         run: |
-          brew install create-dmg
+          # 安装create-dmg
+          brew install create-dmg || true
+          
+          # 如果没有cfs.icns，从构建的应用中获取
+          if [ -f "cfs.icns" ]; then
+            ICON_PATH="cfs.icns"
+          else
+            # 尝试从应用包中提取图标
+            ICON_PATH="release/CloudflareScan_Universal.app/Contents/Resources/cfs.icns"
+            if [ ! -f "$ICON_PATH" ]; then
+              # 查找应用中的图标文件
+              ICON_PATH=$(find release/CloudflareScan_Universal.app -name "*.icns" | head -1)
+            fi
+          fi
+          
+          echo "使用图标: $ICON_PATH"
           
           cd release
-          create-dmg \
-            --volname "CloudflareScan" \
-            --volicon "CloudflareScan_Universal.app/Contents/Resources/cfs.icns" \
-            --window-pos 200 120 \
-            --window-size 800 400 \
-            --icon-size 100 \
-            --icon "CloudflareScan_Universal.app" 200 190 \
-            --hide-extension "CloudflareScan_Universal.app" \
-            --app-drop-link 600 185 \
-            "CloudflareScan_macOS_Universal.dmg" \
-            "."
+          
+          # 创建DMG，如果create-dmg可用
+          if command -v create-dmg &> /dev/null; then
+            create-dmg \
+              --volname "CloudflareScan" \
+              --volicon "$ICON_PATH" \
+              --window-pos 200 120 \
+              --window-size 800 400 \
+              --icon-size 100 \
+              --icon "CloudflareScan_Universal.app" 200 190 \
+              --hide-extension "CloudflareScan_Universal.app" \
+              --app-drop-link 600 185 \
+              "CloudflareScan_macOS_Universal.dmg" \
+              "."
+          else
+            # 如果create-dmg不可用，使用简单的hdiutil
+            echo "create-dmg不可用，使用hdiutil创建DMG"
+            hdiutil create -volname "CloudflareScan" -srcfolder "." \
+              -ov -format UDZO "CloudflareScan_macOS_Universal.dmg"
+          fi
 
       - name: Upload final universal artifact
         uses: actions/upload-artifact@v4
@@ -159,10 +228,9 @@ jobs:
           retention-days: 7
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
         with:
-          files: |
-            release/CloudflareScan_macOS_Universal.dmg
+          files: release/CloudflareScan_macOS_Universal.dmg
           draft: false
           prerelease: false
