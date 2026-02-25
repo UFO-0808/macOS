@@ -1009,7 +1009,7 @@ class CloudflareScanUI(QWidget):
         row1.addSpacing(SPACING)
         
         self.btn_stop = self.make_stop_btn("停止任务", enabled=False)
-        self.btn_stop.clicked.connect(self.confirm_stop_all_tasks)  # 修改为确认停止
+        self.btn_stop.clicked.connect(self.confirm_stop_all_tasks)
         row1.addWidget(self.btn_stop)
         
         row1.addStretch()
@@ -1317,25 +1317,35 @@ class CloudflareScanUI(QWidget):
         if text != text.upper():
             self.input_region.setText(text.upper())
     
+    # ==================== 修复后的确认停止方法 ====================
     def confirm_stop_all_tasks(self):
-        """确认停止所有任务"""
+        """确认停止所有任务（修复 macOS 文字不显示问题）"""
         if not self.scanning and not self.speed_testing:
             return
-        
-        # 创建确认对话框
-        reply = QMessageBox.question(
-            self, 
-            '确认停止', 
-            '确定要停止当前任务吗？',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No  # 默认选择否，避免误操作
-        )
-        
+
+        # 保存当前样式表并临时清除，避免样式影响对话框
+        style_sheet = self.styleSheet()
+        self.setStyleSheet("")
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("确认停止")
+        msg_box.setText("确定要停止当前任务吗？")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+
+        # 显式设置字体（macOS 常用中文字体）
+        font = QFont("PingFang SC", 12)
+        msg_box.setFont(font)
+
+        reply = msg_box.exec()
+
+        # 恢复样式表
+        self.setStyleSheet(style_sheet)
+
         if reply == QMessageBox.Yes:
             self.stop_all_tasks()
-        else:
-            # 用户取消，不做任何操作
-            pass
+        # 用户取消，不做任何操作
+    # ============================================================
     
     def start_ipv4_scan(self):
         if self.scanning or self.speed_testing:
